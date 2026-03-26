@@ -1,6 +1,12 @@
 # Release Guide
 
-This document explains how to publish `biom-feishu-node` so users can install with:
+Current default distribution is GitHub direct install:
+
+```bash
+pip install "git+https://github.com/LuyiTian/bioM-feishu-node.git"
+```
+
+This document explains optional PyPI publishing so users can install with:
 
 ```bash
 pip install biom-feishu-node

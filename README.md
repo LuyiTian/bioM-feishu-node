@@ -1,58 +1,61 @@
 # bioM Feishu Node
 
-Public remote node client for Feishu coding-agent gateways.
+Public remote node client used with `feishu.biom.autos`.
 
-This client runs on a user's machine and connects outbound to your Feishu agent gateway, exposing only explicitly allowed directories.
+This client runs on a user's machine and connects outbound to the gateway, exposing only explicitly allowed directories.
 
-## Install
+## Big Picture
 
-```bash
-pip install biom-feishu-node
-```
+1. User installs and runs `feishu-node` on their own machine.
+2. `feishu-node` connects to gateway (for example `wss://feishu.biom.autos`).
+3. User confirms pairing code in `feishu.biom.autos` admin UI.
+4. Gateway routes tool calls from Feishu assistant to the paired node.
+5. Node executes only inside allowed directories and returns results to gateway.
 
-If PyPI package is not published yet, install from GitHub:
+## Install (Current: GitHub Direct)
 
 ```bash
 pip install "git+https://github.com/LuyiTian/bioM-feishu-node.git"
 ```
 
-Or run directly from source:
+Upgrade to latest:
+
+```bash
+pip install --upgrade "git+https://github.com/LuyiTian/bioM-feishu-node.git"
+```
+
+Run from source:
 
 ```bash
 python -m feishu_node --help
 ```
 
+PyPI release is prepared but GitHub direct install is the current default channel.
+
 ## Quick Start
 
 ```bash
 feishu-node \
-  --server wss://<your-gateway-host> \
+  --server wss://feishu.biom.autos \
   --name <your-node-name> \
   --gateway-token <gateway-token> \
   --allow-dir ~/projects
 ```
 
 After startup:
-- the terminal shows a pairing code
-- submit that code in the Feishu admin site
-- once paired, the node reconnects automatically using a saved local token
+- terminal prints a pairing code
+- submit pairing code in `feishu.biom.autos` Node Pairing page
+- node becomes online and reconnects automatically using local saved token
 
-## User Guide
+## Documentation
 
-See the step-by-step guide:
-- [User Guide](docs/USER_GUIDE.md)
-- [Release Guide](docs/RELEASE.md)
-
-It includes:
-- how to use the `feishu.biom` website
-- pairing workflow
-- directory permission setup
-- security recommendations
+- [User Guide](docs/USER_GUIDE.md): end-user onboarding and `feishu.biom.autos` workflow
+- [Release Guide](docs/RELEASE.md): optional PyPI publishing path
 
 ## Security Notes
 
 - Never paste real gateway tokens in screenshots, tickets, or public chats.
-- The node stores token locally at `~/.feishu-node/config.json` with restrictive permissions on Linux/macOS.
+- Local token is stored at `~/.feishu-node/config.json` with restrictive permissions on Linux/macOS.
 - The node only accesses directories that you explicitly allow.
 - Use `--no-shell` if you want to disable remote command execution.
 
