@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "biom-feishu-node"
+version = "0.1.0"
+description = "Public remote node client for Feishu coding agent gateways"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [
+  { name = "bioM" }
+]
+dependencies = [
+  "websockets>=14,<16"
+]
+keywords = ["feishu", "lark", "agent", "remote", "node"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/LuyiTian/bioM-feishu-node"
+Issues = "https://github.com/LuyiTian/bioM-feishu-node/issues"
+
+[project.scripts]
+feishu-node = "feishu_node.__main__:main"
+
+[tool.setuptools]
+packages = ["feishu_node"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
