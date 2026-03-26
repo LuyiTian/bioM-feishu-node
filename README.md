@@ -41,6 +41,7 @@ After startup:
 
 See the step-by-step guide:
 - [User Guide](docs/USER_GUIDE.md)
+- [Release Guide](docs/RELEASE.md)
 
 It includes:
 - how to use the `feishu.biom` website
