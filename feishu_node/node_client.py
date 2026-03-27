@@ -435,7 +435,7 @@ def run_node(
     gateway_token: str = "",
     no_shell: bool = False,
     ui_port: int = 9201,
-    no_ui: bool = False,
+    no_ui: bool = True,
 ):
     """Entry point: create tools, client, and run the event loop."""
     # Merge CLI dirs with saved dirs from config
@@ -469,8 +469,10 @@ def run_node(
     print(f"feishu-node v0.1.0")
     print(f"  Name:     {node_name}")
     print(f"  Server:   {server_url}")
-    print(f"  Dirs:     {', '.join(all_dirs) if all_dirs else '(none — add via web UI)'}")
+    print(f"  Dirs:     {', '.join(all_dirs) if all_dirs else '(none — add via --allow-dir)'}")
     print(f"  Shell:    {'enabled' if not no_shell else 'disabled'}")
+    if no_ui:
+        print("  Web UI:   disabled (use --ui to enable)")
 
     async def _run():
         tasks = [client.run()]

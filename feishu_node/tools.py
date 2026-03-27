@@ -34,7 +34,7 @@ class Sandbox:
         """Resolve path and verify it's under an allowed directory."""
         if not self.allowed_dirs:
             raise PermissionError(
-                "No allowed directories configured. Add one via --allow-dir or the local web UI."
+                "No allowed directories configured. Add one via --allow-dir or local web UI (--ui)."
             )
         expanded = os.path.expanduser(path)
         if not os.path.isabs(expanded):
