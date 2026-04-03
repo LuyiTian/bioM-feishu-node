@@ -41,7 +41,7 @@ class Sandbox:
             # Relative paths resolve against the first allowed dir
             expanded = os.path.join(self.allowed_dirs[0], expanded)
         resolved = os.path.realpath(expanded)
-        if not any(resolved == d or resolved.startswith(d + os.sep) for d in self.allowed_dirs):
+        if not any(resolved == d or resolved.startswith(d + os.sep) or d == os.sep for d in self.allowed_dirs):
             raise PermissionError(f"Path outside allowed directories: {path}")
         return resolved
 
