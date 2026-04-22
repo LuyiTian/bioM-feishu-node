@@ -64,6 +64,8 @@ After startup:
 ## Documentation
 
 - [User Guide](docs/USER_GUIDE.md): end-user onboarding and `feishu.biom.autos` workflow
+- [Operations Guide](docs/OPERATIONS.md): general setup, pairing, multi-folder strategy, and agent handoff notes
+- [Local Runbook Template](docs/LOCAL_RUNBOOK_TEMPLATE.md): template for machine-specific notes that should stay out of git
 - [Release Guide](docs/RELEASE.md): optional PyPI publishing path
 
 ## Security Notes

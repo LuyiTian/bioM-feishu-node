@@ -101,6 +101,23 @@ Local UI supports:
 
 To use local UI, start node with `--ui`, then open `http://127.0.0.1:9201`.
 
+## 8.1 One Node or Many?
+
+Both are supported.
+
+- One node can expose multiple folders by repeating `--allow-dir`.
+- Existing nodes keep running when you start a second node for another project.
+- A Feishu group is bound to one concrete remote root with `/project init remote <node>:<path>`.
+
+Recommended default:
+
+- one node per project
+- one node per Feishu group
+
+That keeps permissions narrower and makes troubleshooting much easier.
+
+If you need the operational details or want to hand this off to another coding agent, use the tracked operations guide: `docs/OPERATIONS.md`.
+
 ## 9. Security Boundaries
 
 - Prefer project-level folders, not your whole home directory.
@@ -108,6 +125,7 @@ To use local UI, start node with `--ui`, then open `http://127.0.0.1:9201`.
 - Rotate tokens if leaked.
 - Use `--no-shell` in high-security environments.
 - Stop the process when not needed.
+- Prefer a dedicated node per project unless you intentionally want a shared trust boundary.
 
 ## 10. Common Commands
 
