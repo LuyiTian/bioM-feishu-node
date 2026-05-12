@@ -299,3 +299,44 @@ def run_script(path: str, args: str = "", cwd: str = ".", timeout: int = 60) -> 
         return f"Error: Script timed out after {timeout}s"
     except Exception as e:
         return f"Error: {e}"
+
+
+def has_recent_changes(path: str, since_timestamp: float, max_depth: int = 6) -> str:
+    """Check if any files under *path* were modified after *since_timestamp*.
+
+    Skips hidden dirs, ``__pycache__``, ``node_modules``, and ``.git``.
+    Returns JSON: ``{"changed": bool, "count": int, "sample": [...]}``.
+
+    Used by the bot's dream-service activity gate to decide whether a
+    remote-bound chat is worth running nightly maintenance for.
+    """
+    if not os.path.isdir(path):
+        return json.dumps({"error": f"Not a directory: {path}", "changed": False})
+
+    changed_count = 0
+    samples: list[str] = []
+
+    def _scan(dir_path: str, depth: int) -> None:
+        nonlocal changed_count
+        if depth > max_depth:
+            return
+        try:
+            for entry in os.scandir(dir_path):
+                name = entry.name
+                if name.startswith("."):
+                    continue
+                if entry.is_file(follow_symlinks=False):
+                    try:
+                        if entry.stat().st_mtime > since_timestamp:
+                            changed_count += 1
+                            if len(samples) < 10:
+                                samples.append(os.path.relpath(entry.path, path))
+                    except OSError:
+                        pass
+                elif entry.is_dir(follow_symlinks=False) and name not in ("__pycache__", "node_modules", ".git"):
+                    _scan(entry.path, depth + 1)
+        except PermissionError:
+            pass
+
+    _scan(path, 0)
+    return json.dumps({"changed": changed_count > 0, "count": changed_count, "sample": samples})
