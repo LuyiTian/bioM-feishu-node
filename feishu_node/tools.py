@@ -124,6 +124,13 @@ class Tools:
         resolved_cwd = self.sandbox.resolve_cwd(cwd)
         return file_ops.run_script(resolved, args, resolved_cwd, timeout)
 
+    # ── Activity Probe (called by bot's dream-service gate) ─────────
+
+    def has_recent_changes(self, path: str, since_timestamp: float, max_depth: int = 6) -> str:
+        """Probe whether any files under *path* changed after *since_timestamp*."""
+        resolved = self.sandbox.resolve(path)
+        return file_ops.has_recent_changes(resolved, since_timestamp, max_depth)
+
     # ── File Transfer ───────────────────────────────────────────────
 
     def receive_file(self, path: str, content_b64: str) -> str:
