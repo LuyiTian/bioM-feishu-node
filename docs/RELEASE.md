@@ -1,62 +1,46 @@
 # Release Guide
 
-Current default distribution is GitHub direct install:
+Distribution: install direct from GitHub. No PyPI.
 
 ```bash
 pip install "git+https://github.com/LuyiTian/bioM-feishu-node.git"
+# Pin to a tag for production:
+pip install "git+https://github.com/LuyiTian/bioM-feishu-node.git@v0.2.0"
 ```
 
-This document explains optional PyPI publishing so users can install with:
+Nodes running under `feishu-node-launcher` auto-upgrade to the latest
+`vX.Y.Z` tag once per day. They will not pick up untagged main commits.
 
-```bash
-pip install biom-feishu-node
-```
+## Cutting a Release
 
-## One-time Setup (You need to do this manually)
+1. Bump `version` in `pyproject.toml` (e.g. `0.2.1`).
+2. Commit on `main` (PR + merge, or direct push if you own the repo).
+3. Tag and push:
 
-1. Push current branch to GitHub.
-2. Create project `biom-feishu-node` on PyPI (https://pypi.org/manage/projects/).
-3. In PyPI project settings, add **Trusted Publisher**:
-   - Owner: `LuyiTian`
-   - Repository: `bioM-feishu-node`
-   - Workflow name: `publish.yml`
-   - Environment: leave empty
-4. Ensure GitHub Actions are enabled for the repository.
+   ```bash
+   git tag v0.2.1
+   git push origin v0.2.1
+   ```
 
-After this, no API token is needed in GitHub Secrets.
+4. Done. Within 24 h every launcher-managed node will pip-install the new
+   tag and respawn. To roll faster, run `/node upgrade` in any Feishu
+   group you own (pushes an immediate upgrade signal to every online node
+   you own).
 
-## Every Release
+## Tag Discipline
 
-1. Bump version in `pyproject.toml` (e.g. `0.1.1`).
-2. Commit and push to `main`.
-3. Create and push a matching git tag:
+The launcher's tag-only safety check requires the form `vX.Y.Z` —
+exactly three integer components, leading `v`. Tags like `v0.2`,
+`v0.2.0-rc1`, `release-2026-05-13`, or `latest` are rejected and will
+not be auto-installed.
 
-```bash
-git tag v0.1.1
-git push origin v0.1.1
-```
+## Rollback
 
-4. GitHub Action `Publish` will run automatically and upload to PyPI.
+Auto-upgrade is forward-only — it won't downgrade. If a release is bad:
 
-## Safety Checks in CI
+1. Cut a new patch tag (`v0.2.2`) that reverts the offending commits.
+2. Push the tag. Nodes pick it up within 24 h, or push them with
+   `/node upgrade` from a Feishu group.
 
-The publish workflow enforces:
-- build succeeds (`python -m build`)
-- metadata check (`twine check dist/*`)
-- tag/version match (`vX.Y.Z` must equal `project.version`)
-
-## Verify Published Package
-
-```bash
-python -m venv /tmp/venv-check
-source /tmp/venv-check/bin/activate
-pip install --upgrade pip
-pip install biom-feishu-node
-feishu-node --help
-```
-
-## Rollback Strategy
-
-PyPI does not allow overwriting an existing version. If release is bad:
-- yanks are possible, or
-- publish a new patch version (recommended): `0.1.2`
+Yanking a tag does **not** roll nodes back, because their installed
+version is already on disk; you must publish a higher tag.
