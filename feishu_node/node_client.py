@@ -250,6 +250,20 @@ class NodeClient:
                                 self.tools.sandbox.allowed_dirs = list(new_dirs)
                                 self._save_dirs()  # no args — reads self.allowed_dirs
                                 logger.info(f"Dirs updated by server: {len(new_dirs)} entries")
+                            elif method == "request_upgrade":
+                                # Bot is pushing an upgrade. We exit with code 75;
+                                # the launcher (if running) will pip-install the
+                                # latest signed tag and respawn. Plain `feishu-node`
+                                # (no launcher) will simply exit, which is fine —
+                                # the operator will restart it manually anyway.
+                                logger.info("Server requested upgrade — exiting with code 75 for launcher to pick up")
+                                try:
+                                    await ws.close()
+                                except Exception:
+                                    pass
+                                # Delay sys.exit a beat so we don't race the ws close
+                                import os as _os
+                                _os._exit(75)
                             else:
                                 logger.debug(f"Unknown control: {method}")
                             continue
