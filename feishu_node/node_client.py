@@ -16,6 +16,7 @@ import signal
 import string
 import sys
 import time
+from importlib.metadata import PackageNotFoundError, version as pkg_version
 from pathlib import Path
 from typing import Optional
 
@@ -34,6 +35,15 @@ logger = logging.getLogger("feishu-node")
 CONFIG_DIR = Path.home() / ".feishu-node"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 CONFIG_VERSION = 1
+HEARTBEAT_INTERVAL_SECONDS = 60
+PACKAGE_NAME = "biom-feishu-node"
+
+
+def _package_version() -> str:
+    try:
+        return pkg_version(PACKAGE_NAME)
+    except PackageNotFoundError:
+        return "0.0.0"
 
 
 def _generate_pairing_code() -> str:
@@ -181,6 +191,7 @@ class NodeClient:
         self._paired = asyncio.Event()
         self._ws = None  # current WebSocket connection
         self._connected = False
+        self._heartbeat_task: Optional[asyncio.Task] = None
 
         # Load saved token from previous session (server+node scoped)
         config = _load_config()
@@ -230,6 +241,7 @@ class NodeClient:
             # Phase 1: Register / authenticate
             await self._authenticate(ws)
             self._connected = True
+            self._start_heartbeat()
             logger.info("Connected and authenticated.")
             print(f"\n  Node '{self.node_name}' is online and serving requests.")
             print(f"  Capabilities: {', '.join(self.capabilities)}")
@@ -281,6 +293,7 @@ class NodeClient:
                             pass
             finally:
                 self._connected = False
+                await self._stop_heartbeat()
                 self._ws = None
 
     async def _authenticate(self, ws):
@@ -380,6 +393,35 @@ class NodeClient:
             "capabilities": list(self.capabilities),
         }
 
+    def _start_heartbeat(self):
+        """Start a lightweight app-level heartbeat for gateways that track node freshness."""
+        if self._heartbeat_task and not self._heartbeat_task.done():
+            return
+        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+
+    async def _stop_heartbeat(self):
+        """Stop the heartbeat task for the current connection."""
+        task = self._heartbeat_task
+        self._heartbeat_task = None
+        if not task:
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    async def _heartbeat_loop(self):
+        """Send a small periodic control message so the gateway doesn't mark idle nodes offline."""
+        try:
+            while self._running and self._connected:
+                await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
+                if not self._running or not self._connected:
+                    break
+                await self._send_update_dirs()
+        except asyncio.CancelledError:
+            raise
+
     def add_directory(self, path: str) -> Optional[str]:
         """Add a directory. Returns error string or None on success."""
         resolved = os.path.realpath(os.path.expanduser(path))
@@ -469,18 +511,41 @@ def run_node(
         gateway_token=gateway_token,
     )
 
-    # Graceful shutdown on Ctrl+C
     loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    stop_event: Optional[asyncio.Event] = None
+    shutdown_requested = False
 
-    def shutdown(sig, frame):
+    async def _close_current_ws(timeout: float = 2.0):
+        ws = client._ws
+        if ws:
+            try:
+                await asyncio.wait_for(ws.close(), timeout=timeout)
+            except asyncio.TimeoutError:
+                logger.debug("Timed out closing websocket during shutdown")
+            except Exception as e:
+                logger.debug("Error closing websocket during shutdown: %s", e)
+
+    def _request_shutdown():
+        nonlocal shutdown_requested
+        if shutdown_requested:
+            return
+        shutdown_requested = True
         print("\nShutting down...")
         client.stop()
-        loop.call_soon_threadsafe(loop.stop)
+        if stop_event:
+            stop_event.set()
+
+    def shutdown(sig, frame):
+        try:
+            loop.call_soon_threadsafe(_request_shutdown)
+        except RuntimeError:
+            client.stop()
 
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
 
-    print(f"feishu-node v0.1.0")
+    print(f"feishu-node v{_package_version()}")
     print(f"  Name:     {node_name}")
     print(f"  Server:   {server_url}")
     print(f"  Dirs:     {', '.join(all_dirs) if all_dirs else '(none — add via --allow-dir)'}")
@@ -489,16 +554,38 @@ def run_node(
         print("  Web UI:   disabled (use --ui to enable)")
 
     async def _run():
-        tasks = [client.run()]
+        nonlocal stop_event
+        stop_event = asyncio.Event()
+        tasks = [asyncio.create_task(client.run())]
         if not no_ui:
             ui = WebUI(client, port=ui_port)
-            tasks.append(ui.start())
+            tasks.append(asyncio.create_task(ui.start()))
             print(f"  Web UI:   http://127.0.0.1:{ui_port}")
-        await asyncio.gather(*tasks)
+
+        stop_task = asyncio.create_task(stop_event.wait())
+        done, pending = await asyncio.wait(
+            [*tasks, stop_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if stop_task in done:
+            client.stop()
+        await _close_current_ws()
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        for task in pending:
+            if task is not stop_task:
+                task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        for task in done:
+            if task is not stop_task:
+                task.result()
 
     try:
         loop.run_until_complete(_run())
     except KeyboardInterrupt:
         pass
     finally:
+        asyncio.set_event_loop(None)
         loop.close()
