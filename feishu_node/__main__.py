@@ -47,6 +47,10 @@ def build_parser() -> argparse.ArgumentParser:
     # Backward-compatible no-op; UI is already disabled by default.
     parser.add_argument("--no-ui", dest="no_ui", action="store_true", help=argparse.SUPPRESS)
     parser.set_defaults(no_ui=True)
+    parser.add_argument("--monitor-claude", action="store_true",
+        help="Monitor Claude Code sessions and notify Feishu on completion")
+    parser.add_argument("--claude-poll-interval", type=int, default=5,
+        help="Seconds between event spool checks (default: 5)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
     return parser
 
@@ -79,6 +83,8 @@ def main():
         no_shell=args.no_shell,
         ui_port=args.port,
         no_ui=args.no_ui,
+        monitor_claude=args.monitor_claude,
+        claude_poll_interval=args.claude_poll_interval,
     )
 
 

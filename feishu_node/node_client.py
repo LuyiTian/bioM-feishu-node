@@ -27,6 +27,7 @@ except ImportError:
     print("Missing dependency. Install with: pip install websockets")
     sys.exit(1)
 
+from . import file_ops
 from .tools import Sandbox, Tools
 from .web_ui import WebUI
 
@@ -44,13 +45,6 @@ def _package_version() -> str:
         return pkg_version(PACKAGE_NAME)
     except PackageNotFoundError:
         return "0.0.0"
-
-
-# Max size of a single WebSocket frame this node will accept from the gateway.
-# Sized so the bot can push binary files (base64-encoded, ~4/3 inflation) to
-# the node: 96 MiB allows raw payloads up to roughly 50 MiB after the JSON-RPC
-# envelope. Must stay in sync with the bot's node_ws_server MAX_WS_MESSAGE_BYTES.
-MAX_WS_MESSAGE_BYTES = 96 * 1024 * 1024
 
 
 def _generate_pairing_code() -> str:
@@ -186,11 +180,20 @@ class NodeClient:
         allowed_dirs: list[str],
         gateway_token: str = "",
         capabilities: Optional[list[str]] = None,
+        monitor_claude: bool = False,
+        claude_poll_interval: int = 5,
     ):
         self.server_url = _normalize_server_url(server_url)
         self.node_name = str(node_name or "").strip()
         self.tools = tools
         self.allowed_dirs = allowed_dirs
+        # Claude Code session monitoring
+        self.monitor_claude_sessions = monitor_claude
+        self.claude_poll_interval = claude_poll_interval
+        self.events_spool_dir = Path.home() / ".feishu-node" / "claude-events"
+        self._monitor_task = None
+        self._debounce_timers = {}  # session_id -> TimerHandle
+        self._last_tmux_targets = {}  # realpath(cwd) -> tmux_target
         self.gateway_token = (gateway_token or "").strip()
         self.capabilities = capabilities or self._detect_capabilities()
         self.token: Optional[str] = None
@@ -212,6 +215,8 @@ class NodeClient:
         caps = ["file_ops"]
         if self.tools.allow_shell:
             caps.append("run_command")
+        if self.monitor_claude_sessions:
+            caps.append("claude_monitor")
         return caps
 
     async def run(self):
@@ -243,12 +248,13 @@ class NodeClient:
         if self.gateway_token:
             additional_headers = {"Authorization": f"Bearer {self.gateway_token}"}
 
-        async with ws_connect(ws_url, max_size=MAX_WS_MESSAGE_BYTES, additional_headers=additional_headers) as ws:
+        async with ws_connect(ws_url, max_size=20 * 1024 * 1024, additional_headers=additional_headers) as ws:
             self._ws = ws
             # Phase 1: Register / authenticate
             await self._authenticate(ws)
             self._connected = True
             self._start_heartbeat()
+            self._start_session_monitor()
             logger.info("Connected and authenticated.")
             print(f"\n  Node '{self.node_name}' is online and serving requests.")
             print(f"  Capabilities: {', '.join(self.capabilities)}")
@@ -283,6 +289,8 @@ class NodeClient:
                                 # Delay sys.exit a beat so we don't race the ws close
                                 import os as _os
                                 _os._exit(75)
+                            elif method == "inject_claude_session":
+                                asyncio.create_task(self._inject_claude_message(params))
                             else:
                                 logger.debug(f"Unknown control: {method}")
                             continue
@@ -301,6 +309,11 @@ class NodeClient:
             finally:
                 self._connected = False
                 await self._stop_heartbeat()
+                await self._stop_session_monitor()
+                # Cancel pending debounce timers
+                for timer in self._debounce_timers.values():
+                    timer.cancel()
+                self._debounce_timers.clear()
                 self._ws = None
 
     async def _authenticate(self, ws):
@@ -387,6 +400,187 @@ class NodeClient:
             return {"id": req_id, "result": result}
 
         return {"id": req_id, "error": {"code": -32601, "message": f"Unknown method: {method}"}}
+
+    # ── Claude Code session bridge ─────────────────────────────────
+
+    def _start_session_monitor(self):
+        if self._monitor_task and not self._monitor_task.done():
+            return
+        if not self.monitor_claude_sessions:
+            return
+        self.events_spool_dir.mkdir(parents=True, exist_ok=True)
+        self._monitor_task = asyncio.create_task(self._session_monitor_loop())
+
+    async def _stop_session_monitor(self):
+        task = self._monitor_task
+        self._monitor_task = None
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    async def _session_monitor_loop(self):
+        while self._running and self._connected:
+            try:
+                await self._drain_event_spool()
+            except Exception as e:
+                logger.warning(f"Session monitor error: {e}")
+            await asyncio.sleep(self.claude_poll_interval)
+
+    async def _drain_event_spool(self):
+        if not self.events_spool_dir.exists():
+            return
+        for event_file in sorted(self.events_spool_dir.glob("*.json")):
+            try:
+                event = json.loads(event_file.read_text())
+                event_file.unlink(missing_ok=True)
+
+                cwd = event.get("cwd", "")
+                if not self._is_cwd_allowed(cwd):
+                    logger.debug(f"Skipping event: cwd {cwd} not in allowed dirs")
+                    continue
+
+                session_id = event.get("session_id", "")
+                tmux_target = event.get("tmux_target", "")
+                if tmux_target:
+                    self._last_tmux_targets[os.path.realpath(cwd)] = tmux_target
+
+                self._schedule_debounced_notify(session_id, event, tmux_target)
+            except Exception as e:
+                logger.warning(f"Error processing event file {event_file}: {e}")
+                try:
+                    event_file.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+    def _is_cwd_allowed(self, cwd):
+        if not cwd:
+            return False
+        resolved = os.path.realpath(cwd)
+        return any(
+            resolved == d or resolved.startswith(d + os.sep)
+            for d in self.allowed_dirs
+        )
+
+    def _schedule_debounced_notify(self, session_id, event, tmux_target):
+        old_timer = self._debounce_timers.pop(session_id, None)
+        if old_timer:
+            old_timer.cancel()
+        loop = asyncio.get_running_loop()
+        timer = loop.call_later(30, lambda: asyncio.create_task(
+            self._fire_notification(session_id, event, tmux_target)
+        ))
+        self._debounce_timers[session_id] = timer
+
+    async def _fire_notification(self, session_id, event, tmux_target):
+        self._debounce_timers.pop(session_id, None)
+        transcript_path = event.get("transcript_path", "")
+        cwd = event.get("cwd", "")
+        project_path = os.path.realpath(cwd) if cwd else ""
+
+        loop = asyncio.get_running_loop()
+        summary = await loop.run_in_executor(
+            None, file_ops.read_transcript_summary, transcript_path
+        ) if transcript_path else {"last_assistant": "(no transcript)", "message_count": 0}
+
+        message = self._format_notification(project_path, summary, tmux_target)
+        await self._send_notification(
+            notif_type="claude_session_stopped",
+            message=message,
+            project_path=project_path,
+            session_info={
+                "session_id": session_id,
+                "tmux_target": tmux_target,
+                "transcript_summary": summary,
+            }
+        )
+
+    def _format_notification(self, project_path, summary, tmux_target):
+        folder = os.path.basename(project_path) if project_path else "unknown"
+        last_assistant = summary.get("last_assistant", "(no summary)")
+        if len(last_assistant) > 800:
+            last_assistant = last_assistant[:800] + "..."
+        msg_count = summary.get("message_count", 0)
+        reply_hint = "\n\n\U0001f4a1 回复 /cc <指令> 继续这个 session" if tmux_target else ""
+        return f"\u2705 Claude Code Session \u5de5\u4f5c\u5b8c\u6210\n\U0001f4c1 {folder}\n\U0001f4ac \u6d88\u606f\u6570: {msg_count}\n\n\U0001f4dd {last_assistant}{reply_hint}"
+
+    async def _send_notification(self, notif_type, message, project_path="", session_info=None):
+        if not (self._ws and self._connected):
+            return
+        params = {
+            "type": notif_type,
+            "message": message,
+            "project_path": project_path,
+            "session_info": session_info or {},
+        }
+        try:
+            await self._ws.send(json.dumps({"method": "notify", "params": params}))
+        except Exception as e:
+            logger.warning(f"Failed to send notification: {e}")
+
+    async def _check_session_idle(self, tmux_target):
+        try:
+            loop = asyncio.get_running_loop()
+            def _check():
+                import subprocess
+                result = subprocess.run(
+                    ["tmux", "display-message", "-p", "-t", tmux_target, "#{pane_pid}"],
+                    capture_output=True, text=True, timeout=3
+                )
+                pane_pid = result.stdout.strip()
+                if not pane_pid:
+                    return True
+                result2 = subprocess.run(
+                    ["ps", "--ppid", pane_pid, "-o", "pid=", "--no-headers"],
+                    capture_output=True, text=True, timeout=3
+                )
+                for pid_line in result2.stdout.strip().splitlines():
+                    pid = pid_line.strip()
+                    sf = Path.home() / ".claude" / "sessions" / f"{pid}.json"
+                    if sf.exists():
+                        data = json.loads(sf.read_text())
+                        return data.get("status", "unknown") == "idle"
+                return True
+            return await loop.run_in_executor(None, _check)
+        except Exception:
+            return True
+
+    async def _inject_claude_message(self, params):
+        if not self.tools.allow_shell:
+            logger.warning("Injection requires shell access")
+            return
+        project_path = params.get("project_path", "")
+        message = params.get("message", "")
+        tmux_target = params.get("tmux_target", "")
+
+        if not self._is_cwd_allowed(project_path):
+            logger.warning(f"Injection rejected: path {project_path} not allowed")
+            return
+
+        if not tmux_target:
+            tmux_target = self._last_tmux_targets.get(os.path.realpath(project_path), "")
+        if not tmux_target:
+            logger.warning("No tmux target for injection")
+            return
+
+        ready = await self._check_session_idle(tmux_target)
+        if not ready:
+            logger.info(f"Session {tmux_target} not idle, injection may buffer")
+
+        import subprocess as sp
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: sp.run(
+            ["tmux", "send-keys", "-t", tmux_target, "-l", message],
+            capture_output=True, timeout=5
+        ))
+        await asyncio.sleep(0.3)
+        await loop.run_in_executor(None, lambda: sp.run(
+            ["tmux", "send-keys", "-t", tmux_target, "Enter"],
+            capture_output=True, timeout=5
+        ))
+        logger.info(f"Injected message into {tmux_target}")
 
     # ── Dynamic directory management ────────────────────────────────
 
@@ -499,6 +693,8 @@ def run_node(
     no_shell: bool = False,
     ui_port: int = 9201,
     no_ui: bool = True,
+    monitor_claude: bool = False,
+    claude_poll_interval: int = 5,
 ):
     """Entry point: create tools, client, and run the event loop."""
     # Merge CLI dirs with saved dirs from config
@@ -516,6 +712,8 @@ def run_node(
         tools=tools,
         allowed_dirs=all_dirs,
         gateway_token=gateway_token,
+        monitor_claude=monitor_claude,
+        claude_poll_interval=claude_poll_interval,
     )
 
     loop = asyncio.new_event_loop()

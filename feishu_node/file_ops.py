@@ -340,3 +340,92 @@ def has_recent_changes(path: str, since_timestamp: float, max_depth: int = 6) ->
 
     _scan(path, 0)
     return json.dumps({"changed": changed_count > 0, "count": changed_count, "sample": samples})
+
+
+# ── Claude Code session bridge helpers ──────────────────────────
+
+
+def encode_cwd_to_project_dir(cwd):
+    """Mirror Claude Code's project-dir encoding."""
+    return cwd.replace("/", "-").replace("~", "-")
+
+
+def read_transcript_summary(transcript_path, max_chars=1000):
+    """Parse a Claude Code JSONL transcript. Return summary dict."""
+    import json as _json
+    result = {"last_assistant": "", "last_user": "", "message_count": 0, "session_id": None, "error": None}
+    if not transcript_path or not os.path.isfile(transcript_path):
+        result["error"] = f"Transcript not found: {transcript_path}"
+        return result
+    try:
+        lines = []
+        with open(transcript_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    lines.append(line)
+        result["message_count"] = len(lines)
+        # Walk backwards for last assistant message
+        for line in reversed(lines):
+            try:
+                entry = _json.loads(line)
+                if entry.get("type") == "assistant":
+                    msg = entry.get("message", {})
+                    content = msg.get("content", [])
+                    texts = []
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            text = block.get("text", "")
+                            # Strip system-reminder tags
+                            import re
+                            text = re.sub(r"<system-reminder>.*?</system-reminder>", "", text, flags=re.DOTALL).strip()
+                            if text:
+                                texts.append(text)
+                    if texts:
+                        result["last_assistant"] = "\n".join(texts)[:max_chars]
+                        result["session_id"] = entry.get("session_id")
+                        break
+            except _json.JSONDecodeError:
+                continue
+        # Walk backwards for last user message
+        for line in reversed(lines):
+            try:
+                entry = _json.loads(line)
+                if entry.get("type") == "user":
+                    msg = entry.get("message", {})
+                    content = msg.get("content", [])
+                    if isinstance(content, str):
+                        result["last_user"] = content[:200]
+                    elif isinstance(content, list):
+                        for block in content:
+                            if isinstance(block, dict) and block.get("type") == "text":
+                                result["last_user"] = block.get("text", "")[:200]
+                                break
+                    break
+            except _json.JSONDecodeError:
+                continue
+    except Exception as e:
+        result["error"] = str(e)
+    return result
+
+
+def list_claude_transcripts(cwd):
+    """List all transcript files for a project directory."""
+    import json as _json
+    encoded = encode_cwd_to_project_dir(cwd)
+    projects_dir = os.path.expanduser("~/.claude/projects")
+    project_dir = os.path.join(projects_dir, encoded)
+    if not os.path.isdir(project_dir):
+        return _json.dumps([])
+    transcripts = []
+    for f in sorted(os.listdir(project_dir), reverse=True):
+        if f.endswith(".jsonl"):
+            full = os.path.join(project_dir, f)
+            stat = os.stat(full)
+            transcripts.append({
+                "path": full,
+                "session_id": f.replace(".jsonl", ""),
+                "mtime": stat.st_mtime,
+                "size": stat.st_size,
+            })
+    return _json.dumps(transcripts)
