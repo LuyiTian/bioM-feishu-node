@@ -75,6 +75,37 @@ class TestFetchLatestTag:
         with patch("feishu_node.launcher.urllib.request.urlopen", side_effect=boom):
             assert launcher.fetch_latest_tag("any/repo") is None
 
+    def test_release_failure_falls_back_to_git_tags(self):
+        responses = [
+            OSError("no release"),
+            _FakeUrlOpen([
+                {"name": "v0.2.0"},
+                {"name": "v0.2.2"},
+                {"name": "not-semver"},
+                {"name": "v0.2.1"},
+            ]),
+        ]
+
+        def fake_urlopen(*a, **k):
+            item = responses.pop(0)
+            if isinstance(item, Exception):
+                raise item
+            return item
+
+        with patch("feishu_node.launcher.urllib.request.urlopen", side_effect=fake_urlopen):
+            assert launcher.fetch_latest_tag("any/repo") == "v0.2.2"
+
+    def test_fetch_latest_git_tag_rejects_bad_tags(self):
+        with patch(
+            "feishu_node.launcher.urllib.request.urlopen",
+            return_value=_FakeUrlOpen([
+                {"name": "latest"},
+                {"name": "v1.2"},
+                {"name": "v1.2.3-rc1"},
+            ]),
+        ):
+            assert launcher.fetch_latest_git_tag("any/repo") is None
+
 
 # ---------------------------------------------------------------------------
 # pip_upgrade_to_tag — refuses unsafe tags

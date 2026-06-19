@@ -116,12 +116,13 @@ def is_newer(remote_tag: str, local_version: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def fetch_latest_tag(repo: str, timeout: float = 10.0) -> Optional[str]:
-    """Query GitHub /releases/latest. Returns tag_name if it matches the
-    safe `vX.Y.Z` pattern; otherwise None.
+    """Query GitHub for the newest safe release tag.
 
-    Network failures, malformed JSON, and non-conforming tag names all return
-    None — they should NOT crash the launcher. The poller will simply retry
-    next interval.
+    Prefer ``/releases/latest`` when operators create GitHub Releases. If the
+    repo only has pushed git tags, fall back to ``/tags`` and select the highest
+    semver-shaped ``vX.Y.Z`` tag. Network failures, malformed JSON, and
+    non-conforming tag names all return None — they should NOT crash the
+    launcher. The poller will simply retry next interval.
     """
     url = f"https://api.github.com/repos/{repo}/releases/latest"
     req = urllib.request.Request(
@@ -136,14 +137,47 @@ def fetch_latest_tag(repo: str, timeout: float = 10.0) -> Optional[str]:
             data = json.load(resp)
     except Exception as e:
         logger.debug("upgrade poll: GitHub fetch failed: %s", e)
-        return None
+        return fetch_latest_git_tag(repo, timeout=timeout)
 
     tag = (data.get("tag_name") or "").strip()
     if TAG_RE.match(tag):
         return tag
     if tag:
         logger.debug("upgrade poll: ignoring tag '%s' (does not match vX.Y.Z)", tag)
-    return None
+    return fetch_latest_git_tag(repo, timeout=timeout)
+
+
+def fetch_latest_git_tag(repo: str, timeout: float = 10.0) -> Optional[str]:
+    """Return the highest semver-shaped git tag from GitHub's tags API."""
+    url = f"https://api.github.com/repos/{repo}/tags?per_page=100"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": f"{PACKAGE_NAME}/{get_local_version()}",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.load(resp)
+    except Exception as e:
+        logger.debug("upgrade poll: GitHub tags fetch failed: %s", e)
+        return None
+
+    if not isinstance(data, list):
+        return None
+
+    candidates: list[tuple[tuple[int, int, int], str]] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        tag = str(item.get("name") or "").strip()
+        parsed = _parse_semver(tag) if TAG_RE.match(tag) else None
+        if parsed is not None:
+            candidates.append((parsed, tag))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: item[0])[1]
 
 
 def pip_upgrade_to_tag(repo: str, tag: str, timeout: float = 600.0) -> bool:
