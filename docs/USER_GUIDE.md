@@ -153,6 +153,14 @@ Change local UI port:
 feishu-node --server wss://feishu.biom.autos --name laptop --allow-dir ~/projects --ui --port 9301
 ```
 
+Monitor Claude Code sessions and push completion notices to the bound Feishu
+group (auto-installs the Stop hook; reply with `/cc` in Feishu to continue a
+session). See [README → Claude Code Session Monitoring](../README.md#claude-code-session-monitoring):
+
+```bash
+feishu-node --server wss://feishu.biom.autos --name laptop --allow-dir ~/projects --monitor-claude
+```
+
 Feishu group commands:
 
 ```text
