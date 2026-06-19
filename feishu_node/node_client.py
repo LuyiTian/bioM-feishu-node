@@ -47,6 +47,13 @@ def _package_version() -> str:
         return "0.0.0"
 
 
+# Max size of a single WebSocket frame this node will accept from the gateway.
+# Sized so the bot can push binary files (base64-encoded, ~4/3 inflation) to
+# the node: 96 MiB allows raw payloads up to roughly 50 MiB after the JSON-RPC
+# envelope. Must stay in sync with the bot's node_ws_server MAX_WS_MESSAGE_BYTES.
+MAX_WS_MESSAGE_BYTES = 96 * 1024 * 1024
+
+
 def _generate_pairing_code() -> str:
     """6-char alphanumeric pairing code (uppercase, no ambiguous chars)."""
     chars = string.ascii_uppercase.replace("O", "").replace("I", "") + string.digits.replace("0", "").replace("1", "")
@@ -248,7 +255,7 @@ class NodeClient:
         if self.gateway_token:
             additional_headers = {"Authorization": f"Bearer {self.gateway_token}"}
 
-        async with ws_connect(ws_url, max_size=20 * 1024 * 1024, additional_headers=additional_headers) as ws:
+        async with ws_connect(ws_url, max_size=MAX_WS_MESSAGE_BYTES, additional_headers=additional_headers) as ws:
             self._ws = ws
             # Phase 1: Register / authenticate
             await self._authenticate(ws)
