@@ -38,12 +38,40 @@ import sys
 import time
 
 
+def _controlling_tty():
+    """Return this process's controlling terminal path (e.g. /dev/pts/15), or "".
+
+    Claude Code pipes the Stop-event JSON to our stdin, so fd 0 is a pipe — not
+    the pane's pty — and os.ttyname(0) raises ENOTTY. The controlling terminal
+    survives that redirection, so read it from /proc/self/stat (Linux) where
+    field `tty_nr` encodes the device. Fall back to os.ttyname on fd 0/1/2 in
+    case one of them happens to be the tty (non-Linux, or unredirected).
+    """
+    try:
+        data = open("/proc/self/stat").read()
+        # comm (field 2) may contain spaces/parens — split after the last ')'.
+        rest = data[data.rindex(")") + 2:].split()
+        tty_nr = int(rest[4])  # state ppid pgrp session tty_nr
+        if tty_nr:
+            major = (tty_nr >> 8) & 0xFFF
+            minor = (tty_nr & 0xFF) | ((tty_nr >> 12) & 0xFFF00)
+            if major == 136:  # UNIX98 pseudo-terminal slaves -> /dev/pts/N
+                return "/dev/pts/%d" % minor
+    except (OSError, ValueError, IndexError):
+        pass
+    for fd in (0, 1, 2):
+        try:
+            return os.ttyname(fd)
+        except OSError:
+            continue
+    return ""
+
+
 def resolve_tmux_target():
     """Find the tmux pane for this process via TTY matching.
     Returns 'session:window.pane' or '' if not in tmux."""
-    try:
-        tty = os.ttyname(0)  # stdin's controlling terminal
-    except OSError:
+    tty = _controlling_tty()
+    if not tty:
         return ""
 
     try:
