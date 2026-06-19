@@ -189,6 +189,7 @@ class NodeClient:
         capabilities: Optional[list[str]] = None,
         monitor_claude: bool = False,
         claude_poll_interval: int = 5,
+        install_claude_hook: bool = True,
     ):
         self.server_url = _normalize_server_url(server_url)
         self.node_name = str(node_name or "").strip()
@@ -197,6 +198,10 @@ class NodeClient:
         # Claude Code session monitoring
         self.monitor_claude_sessions = monitor_claude
         self.claude_poll_interval = claude_poll_interval
+        # When monitoring is on, self-install the Stop hook so deployment is
+        # unattended (--no-claude-hook-install opts out).
+        self.install_claude_hook_enabled = install_claude_hook
+        self._claude_hook_installed = False
         self.events_spool_dir = Path.home() / ".feishu-node" / "claude-events"
         self._monitor_task = None
         self._debounce_timers = {}  # session_id -> TimerHandle
@@ -416,7 +421,27 @@ class NodeClient:
         if not self.monitor_claude_sessions:
             return
         self.events_spool_dir.mkdir(parents=True, exist_ok=True)
+        self._auto_install_claude_hook()
         self._monitor_task = asyncio.create_task(self._session_monitor_loop())
+
+    def _auto_install_claude_hook(self):
+        """Self-install the Claude Code Stop hook (once per process). Best-effort:
+        a failure here must never stop the monitor from running."""
+        if self._claude_hook_installed or not self.install_claude_hook_enabled:
+            return
+        self._claude_hook_installed = True
+        try:
+            from . import claude_hook
+
+            res = claude_hook.install_claude_hook()
+            if res.get("hook_written") or res.get("settings_updated"):
+                logger.info("Claude Code Stop hook auto-installed/updated: %s", res)
+            elif res.get("settings_skipped"):
+                logger.warning("Claude Code settings.json left untouched (unparseable); hook script still installed")
+            else:
+                logger.debug("Claude Code Stop hook already present: %s", res)
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("Claude Code hook auto-install failed (non-fatal): %s", e)
 
     async def _stop_session_monitor(self):
         task = self._monitor_task
@@ -712,6 +737,7 @@ def run_node(
     no_ui: bool = True,
     monitor_claude: bool = False,
     claude_poll_interval: int = 5,
+    install_claude_hook: bool = True,
 ):
     """Entry point: create tools, client, and run the event loop."""
     # Merge CLI dirs with saved dirs from config
@@ -731,6 +757,7 @@ def run_node(
         gateway_token=gateway_token,
         monitor_claude=monitor_claude,
         claude_poll_interval=claude_poll_interval,
+        install_claude_hook=install_claude_hook,
     )
 
     loop = asyncio.new_event_loop()

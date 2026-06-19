@@ -51,6 +51,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Monitor Claude Code sessions and notify Feishu on completion")
     parser.add_argument("--claude-poll-interval", type=int, default=5,
         help="Seconds between event spool checks (default: 5)")
+    parser.add_argument("--no-claude-hook-install", dest="install_claude_hook", action="store_false",
+        help="Do not auto-install the Claude Code Stop hook into ~/.claude (default: install when --monitor-claude)")
+    parser.set_defaults(install_claude_hook=True)
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
     return parser
 
@@ -85,6 +88,7 @@ def main():
         no_ui=args.no_ui,
         monitor_claude=args.monitor_claude,
         claude_poll_interval=args.claude_poll_interval,
+        install_claude_hook=args.install_claude_hook,
     )
 
 
