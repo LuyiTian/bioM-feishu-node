@@ -70,6 +70,65 @@ Don't want the launcher? You can still run `feishu-node` directly with the
 same flags — you just lose auto-upgrade and crash-restart, and you'll
 need to upgrade by hand each release.
 
+## Claude Code Session Monitoring
+
+When `--monitor-claude` is enabled, the node monitors Claude Code sessions
+running in allowed directories and pushes notifications to your Feishu chat
+when a session finishes work.
+
+### Setup
+
+1. **Start the node with monitoring enabled:**
+```bash
+feishu-node \
+  --server wss://your-gateway.example.com \
+  --name my-node \
+  --allow-dir /path/to/project \
+  --monitor-claude
+```
+
+2. **Install the Claude Code Stop hook** — create `~/.claude/hooks/cc-event-hook.py`
+   (copy from the `scripts/` directory in this repo) and add to `~/.claude/settings.json`:
+```json
+{
+  "hooks": {
+    "Stop": [{
+      "matcher": "",
+      "hooks": [{
+        "type": "command",
+        "command": "python3 ~/.claude/hooks/cc-event-hook.py",
+        "timeout": 5
+      }]
+    }]
+  }
+}
+```
+
+3. **Run Claude Code in tmux** (required for `/cc` reply injection):
+```bash
+tmux new -s my-project
+cd /path/to/project
+claude --dangerously-skip-permissions
+```
+
+### Features
+
+- **Automatic notifications**: When Claude Code finishes responding (and is
+  idle for 30 seconds), a summary of the last message is pushed to the Feishu
+  chat bound to the project folder.
+- **Reply to continue**: Use `/cc <instruction>` in Feishu to inject text into
+  the live Claude Code session via `tmux send-keys`.
+- **Multiple sessions**: If multiple sessions run in the same folder, `/cc`
+  targets the most recently active one. Use `/cc list` to see all sessions.
+- **Folder-scoped**: Only the Feishu chat bound to the specific project folder
+  receives notifications. No cross-folder leakage.
+
+### Requirements
+
+- Claude Code v2.1+ with hooks support
+- tmux (for `/cc` injection; notifications work without tmux)
+- Gateway server must support the `notify` WebSocket message
+
 ## Auto-upgrade & Service
 
 The launcher upgrades on two channels, both **tag-only** for safety:
@@ -145,6 +204,8 @@ Options:
 - `--gateway-token <token>`: optional WS handshake bearer token
 - env var: `BIOM_GATEWAY_TOKEN` (preferred), `NODE_WS_GATEWAY_TOKEN` (legacy)
 - `--allow-dir <path>`: allow one directory (repeatable)
+- `--monitor-claude`: monitor Claude Code sessions and notify Feishu on completion (see [Claude Code Session Monitoring](#claude-code-session-monitoring))
+- `--claude-poll-interval <int>`: seconds between event spool checks (default `5`)
 - `--no-shell`: disable shell command execution
 - `--ui`: enable local web UI (`127.0.0.1`, disabled by default)
 - `--port <int>`: local web UI port when `--ui` is enabled (default `9201`)

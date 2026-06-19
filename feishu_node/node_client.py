@@ -193,7 +193,7 @@ class NodeClient:
         self.events_spool_dir = Path.home() / ".feishu-node" / "claude-events"
         self._monitor_task = None
         self._debounce_timers = {}  # session_id -> TimerHandle
-        self._last_tmux_targets = {}  # realpath(cwd) -> tmux_target
+        self._active_sessions = {}  # realpath(cwd) -> list of {"tmux_target": str, "session_id": str, "last_seen": float}
         self.gateway_token = (gateway_token or "").strip()
         self.capabilities = capabilities or self._detect_capabilities()
         self.token: Optional[str] = None
@@ -445,7 +445,11 @@ class NodeClient:
                 session_id = event.get("session_id", "")
                 tmux_target = event.get("tmux_target", "")
                 if tmux_target:
-                    self._last_tmux_targets[os.path.realpath(cwd)] = tmux_target
+                    key = os.path.realpath(cwd)
+                    sessions = self._active_sessions.setdefault(key, [])
+                    sessions = [s for s in sessions if s.get("tmux_target") != tmux_target]
+                    sessions.append({"tmux_target": tmux_target, "session_id": session_id, "last_seen": time.time()})
+                    self._active_sessions[key] = sessions[-10:]  # Keep last 10
 
                 self._schedule_debounced_notify(session_id, event, tmux_target)
             except Exception as e:
@@ -503,7 +507,11 @@ class NodeClient:
         if len(last_assistant) > 800:
             last_assistant = last_assistant[:800] + "..."
         msg_count = summary.get("message_count", 0)
-        reply_hint = "\n\n\U0001f4a1 回复 /cc <指令> 继续这个 session" if tmux_target else ""
+        session_name = tmux_target.split(":")[0] if tmux_target else ""
+        reply_hint = ""
+        if tmux_target:
+            session_label = f" ({session_name})" if session_name else ""
+            reply_hint = f"\n\n\U0001f4a1 回复 /cc <指令> 继续这个 session{session_label}"
         return f"\u2705 Claude Code Session \u5de5\u4f5c\u5b8c\u6210\n\U0001f4c1 {folder}\n\U0001f4ac \u6d88\u606f\u6570: {msg_count}\n\n\U0001f4dd {last_assistant}{reply_hint}"
 
     async def _send_notification(self, notif_type, message, project_path="", session_info=None):
@@ -560,7 +568,9 @@ class NodeClient:
             return
 
         if not tmux_target:
-            tmux_target = self._last_tmux_targets.get(os.path.realpath(project_path), "")
+            sessions = self._active_sessions.get(os.path.realpath(project_path), [])
+            if sessions:
+                tmux_target = sessions[-1].get("tmux_target", "")
         if not tmux_target:
             logger.warning("No tmux target for injection")
             return
