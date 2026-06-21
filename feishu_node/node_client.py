@@ -470,14 +470,15 @@ class NodeClient:
                 event_file.unlink(missing_ok=True)
 
                 cwd = event.get("cwd", "")
-                if not self._is_cwd_allowed(cwd):
+                project_path = self._project_root_for_cwd(cwd)
+                if not project_path:
                     logger.debug(f"Skipping event: cwd {cwd} not in allowed dirs")
                     continue
 
                 session_id = event.get("session_id", "")
                 tmux_target = event.get("tmux_target", "")
                 if tmux_target:
-                    key = os.path.realpath(cwd)
+                    key = project_path
                     sessions = self._active_sessions.setdefault(key, [])
                     sessions = [s for s in sessions if s.get("tmux_target") != tmux_target]
                     sessions.append({"tmux_target": tmux_target, "session_id": session_id, "last_seen": time.time()})
@@ -492,13 +493,17 @@ class NodeClient:
                     pass
 
     def _is_cwd_allowed(self, cwd):
+        return bool(self._project_root_for_cwd(cwd))
+
+    def _project_root_for_cwd(self, cwd):
         if not cwd:
-            return False
+            return ""
         resolved = os.path.realpath(cwd)
-        return any(
-            resolved == d or resolved.startswith(d + os.sep)
-            for d in self.allowed_dirs
+        matches = (
+            d for d in self.allowed_dirs
+            if d == os.sep or resolved == d or resolved.startswith(d + os.sep)
         )
+        return max(matches, key=len, default="")
 
     def _schedule_debounced_notify(self, session_id, event, tmux_target):
         old_timer = self._debounce_timers.pop(session_id, None)
@@ -514,7 +519,7 @@ class NodeClient:
         self._debounce_timers.pop(session_id, None)
         transcript_path = event.get("transcript_path", "")
         cwd = event.get("cwd", "")
-        project_path = os.path.realpath(cwd) if cwd else ""
+        project_path = self._project_root_for_cwd(cwd) or (os.path.realpath(cwd) if cwd else "")
 
         loop = asyncio.get_running_loop()
         summary = await loop.run_in_executor(
