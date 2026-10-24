@@ -32,10 +32,18 @@ pip install --upgrade "git+https://github.com/LuyiTian/bioM-feishu-node.git"
 
 ## 4. Open `feishu.biom.autos` and Prepare Startup Command
 
-1. Sign in to `feishu.biom.autos`.
-2. Go to **Node Pairing** page.
-3. Copy the startup command template shown in the page.
-4. Set gateway token in your current shell session (recommended):
+There are two login steps. The shared outer browser prompt was added to keep
+crawlers from reaching the login UI and reduce false classifications as a
+phishing site impersonating Feishu. Application access requires your personal
+bioM account.
+
+1. Open [https://feishu.biom.autos/](https://feishu.biom.autos/).
+2. In the browser's authentication dialog, enter username **`biom`** and password **`biom`**.
+3. On the webpage, sign in with your **api.biom.autos account email and password**.
+   Use your bioM account here, not your Feishu account or the shared outer password.
+4. Go to **Node Pairing** page.
+5. Copy the startup command template shown in the page.
+6. Set gateway token in your current shell session (recommended):
 
 ```bash
 read -s -p "Gateway token: " BIOM_GATEWAY_TOKEN; echo
@@ -43,6 +51,10 @@ export BIOM_GATEWAY_TOKEN
 ```
 
 If your server does not require gateway auth, skip this step.
+
+If your browser keeps using an old outer password, open the website in a private
+or incognito window and enter `biom` / `biom` again. These shared website entrance
+credentials are separate from the node gateway token.
 
 ## 5. Start the Node Locally
 

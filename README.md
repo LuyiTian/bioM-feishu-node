@@ -16,6 +16,17 @@ This client runs on a user's machine and connects outbound to the gateway, expos
 6. Gateway routes tool calls from Feishu assistant to the paired node.
 7. Node executes only inside allowed directories and returns results to gateway.
 
+## Website Login
+
+Open [feishu.biom.autos](https://feishu.biom.autos/). In the browser's initial
+authentication dialog, enter username **`biom`** and password **`biom`**.
+Then sign in on the webpage with your **api.biom.autos account email and password**.
+
+The shared outer prompt helps keep crawlers from reaching the login page and
+was added to reduce false phishing classifications. Your personal bioM account
+is still required to access the application. See the [User Guide](docs/USER_GUIDE.md#4-open-feishubiomautos-and-prepare-startup-command)
+for the full login and node setup steps.
+
 ## Install
 
 Distribution is direct from GitHub. **There is no PyPI package.** Pin to a release tag in production:
